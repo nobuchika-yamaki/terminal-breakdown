@@ -1,0 +1,114 @@
+import numpy as np
+
+# -----------------------------
+# Utility functions
+# -----------------------------
+
+def softmax(x):
+    e = np.exp(x - np.max(x))
+    return e / np.sum(e)
+
+def kl_divergence(p, q, eps=1e-12):
+    p = np.clip(p, eps, 1.0)
+    q = np.clip(q, eps, 1.0)
+    return np.sum(p * np.log(p / q))
+
+def symmetric_kl(p, q):
+    return kl_divergence(p, q) + kl_divergence(q, p)
+
+# -----------------------------
+# Minimal predictive model
+# -----------------------------
+
+class PredictiveModel:
+    def __init__(self, dim, noise_scale=0.0):
+        self.dim = dim
+        self.weights = np.random.randn(dim)
+        self.noise_scale = noise_scale
+
+    def predict(self, x):
+        logits = self.weights * x
+        return softmax(logits)
+
+    def update(self, lr=0.0):
+        # bounded update (learning disabled by default)
+        self.weights += lr * np.random.randn(self.dim)
+
+# -----------------------------
+# Simulation parameters
+# -----------------------------
+
+DIM = 5
+N_TRIALS = 100
+H_VALUES = np.arange(0.0, 2.01, 0.1)
+EPSILON = 1e-3
+DELTA_T = 0.05
+MAX_STEPS = 50
+
+# -----------------------------
+# Main experiment
+# -----------------------------
+
+results = []
+
+for h in H_VALUES:
+    dkl_values = []
+    terminal_flags = []
+    irreversible_flags = []
+
+    for trial in range(N_TRIALS):
+        np.random.seed(trial)
+
+        # base model
+        M = PredictiveModel(DIM, noise_scale=h)
+
+        # perturbed model
+        M_prime = PredictiveModel(DIM, noise_scale=h)
+        M_prime.weights = M.weights + EPSILON * np.random.randn(DIM)
+
+        # initial state
+        x = np.random.randn(DIM)
+
+        # prediction
+        p = M.predict(x)
+        p_prime = M_prime.predict(x)
+
+        try:
+            dkl = symmetric_kl(p, p_prime)
+            terminal = (dkl <= 0.0)
+        except Exception:
+            dkl = np.nan
+            terminal = True
+
+        dkl_values.append(dkl)
+        terminal_flags.append(terminal)
+
+        # irreversibility test
+        irreversible = False
+        if terminal:
+            recovered = False
+            for _ in range(MAX_STEPS):
+                # admissible update: frozen or bounded
+                M.update(lr=0.0)
+                p_rec = M.predict(x)
+                dkl_rec = symmetric_kl(p_rec, p_prime)
+                if dkl_rec > 0.0:
+                    recovered = True
+                    break
+            irreversible = not recovered
+
+        irreversible_flags.append(irreversible)
+
+    results.append({
+        "h": h,
+        "mean_D_sym": np.nanmean(dkl_values),
+        "terminal_prob": np.mean(terminal_flags),
+        "irreversible_prob": np.mean(irreversible_flags)
+    })
+
+# -----------------------------
+# Output
+# -----------------------------
+
+for r in results:
+    print(r)
